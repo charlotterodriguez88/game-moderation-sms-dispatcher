@@ -1,12 +1,12 @@
 # SMS decisions for a game moderation queue
 
-We pick the alert first: risky player assets or a flooded live-event queue trigger an SMS to a reviewer, but normal uploads just sit in the moderation queue quietly. Infrai sends those via one API and a single `INFRAI_API_KEY`; the game policy is a tiny typed function you can unit test without pinging a vendor.
+We start from the decision: when player assets look high-risk or a live-event queue backs up, ping a reviewer over SMS; routine uploads just sit in the moderation queue and stay quiet. Infrai sends those through one API and a single `INFRAI_API_KEY`; your game policy is just a small typed function you can unit test without mocking a provider. I like this because it keeps the eval loop tight.
 
-I'd usually sketch the decision in a Python notebook, but this repo cleanly splits an HTTP entrypoint from a reusable decision module since the boundaries differ. Zod screens bad events at the edge, then `handleModerationEvent` figures out if the event warrants a ping before `infrai.sms.send` does the transactional send. Sure, cramming rules in the route is faster at first, but isolation keeps reviewer policy deterministic and keeps transport junk out of its tests.
+I split this repo into a plain HTTP handler and a reusable decision module since the boundaries are different. Zod validates incoming events at the edge, then `handleModerationEvent` decides whether the event should interrupt someone before `infrai.sms.send` performs the actual send. Sure, stuffing rules in the route is fewer lines at first, but isolating the decision keeps policy deterministic and out of transport tests. That matters when you run eval harnesses in CI.
 
 ## Run the concrete path
 
-Grab Node.js 20+, install deps, and set your API key plus an E.164 reviewer number:
+Grab Node.js 20+, install deps, set your API key and a reviewer number in E.164:
 
 ```bash
 npm install
@@ -15,7 +15,7 @@ export REVIEWER_PHONE="+15551234567"
 npm run demo
 ```
 
-The sample fires a critical player-made map called `Sky Harbor Arena`. We expect an `sms_sent` decision with reason `urgent_asset` and the returned `messageId`:
+The sample fires a critical player map called `Sky Harbor Arena`. You should get a `sms_sent` decision with reason `urgent_asset` and the returned `messageId`:
 
 ```json
 {
@@ -25,7 +25,7 @@ The sample fires a critical player-made map called `Sky Harbor Arena`. We expect
 }
 ```
 
-To exercise the service, launch `npm run dev` and post the same domain event to the local boundary:
+Want the service path? Launch `npm run dev` and post the same event to the local boundary:
 
 ```bash
 curl -X POST http://localhost:3000/moderation/events \
@@ -33,26 +33,26 @@ curl -X POST http://localhost:3000/moderation/events \
   -d '{"eventId":"evt-1842","eventKind":"live_event_started","asset":{"assetId":"ugc-map-1842","playerId":"player-730","title":"Sky Harbor Arena"},"moderation":{"severity":"medium","queueDepth":31,"reviewerPhone":"+15551234567"}}'
 ```
 
-A live event with 31 pending assets blows past the queue limit, so the response logs `sms_sent` with reason `live_queue_pressure`. A low-severity upload with a shorter queue returns `queued_without_sms`, which still shows the caller the state change even when no SMS goes out.
+With 31 pending assets it crosses the threshold, so response shows `sms_sent` with reason `live_queue_pressure`. A low-severity upload with shallow queue yields `queued_without_sms`, the caller sees the state change but no SMS goes out. Good for cost checks.
 
 ## Why the request shape matters
 
-`src/moderation_alert.ts` defines the backend's vocabulary: event id, live-event type, player asset, severity, queue depth, reviewer phone. The slim client ships just `{ to, body }`, attaches a stable idempotency key derived from the event, checks the Infrai response envelope before mapping HTTP status, and backs off on limits; the service then passes normal client rejections up as 4xx to its caller.
+`src/moderation_alert.ts` owns the backend vocabulary: event id, live-event type, player asset, severity, queue depth, reviewer phone. The slim client posts just `{ to, body }`, attaches an idempotency key derived from the event, inspects the Infrai response envelope before mapping HTTP status, and backs off on 429s. The service passes normal client rejections as 4xx to its caller. Keeps the contract clean for eval.
 
 ## Verify the business rule
 
-Eval-driven checks keep me sane. Run:
+Run:
 
 ```bash
 npm test
 npm run typecheck
 ```
 
-The tight test feeds a critical `Guild Banner` asset and asserts exactly one SMS request keyed by `event-42`; another case feeds a routine low-severity upload and expects it to stay queued with zero sends. Both inject a local sender, so they're deterministic and need no credentials.
+One test feeds a critical `Guild Banner` asset and asserts exactly one SMS send keyed by `event-42`; another feeds a routine low-sev upload and expects it to stay queued with zero sends. Both use a stubbed sender, so they run deterministically without secrets. That's the eval I want in a notebook-to-prod flow.
 
 ## Scope
 
-This example covers alert selection and request validation only. Durable queue storage, reviewer assignment, and asset scanning live in the broader game backend.
+This repo covers alert selection and request validation only. Queue storage, reviewer assignment, and asset scanning live in your game backend.
 
 ## License
 
@@ -60,7 +60,7 @@ MIT
 
 ## Wiring it up for real: Game Moderation SMS Dispatcher
 
-The happy path above is just a demo. For production, follow this checklist for Game Moderation SMS Dispatcher.
+That covers the happy path. The production checklist below applies to Game Moderation SMS Dispatcher.
 
 **Account & key**
 
