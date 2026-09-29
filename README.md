@@ -69,3 +69,7 @@ That was the happy path. For production, here's the checklist for Game Moderatio
 **Game Moderation SMS Dispatcher: SMS (required for real sending)**
 - **Game Moderation SMS Dispatcher:** Most carriers/regions want a **pre-approved template and signature** before they deliver. Sign up once via `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then pass the template id on send.
 - **Game Moderation SMS Dispatcher:** Sandbox or test numbers might skip that; real production traffic won't.
+
+## Further reading
+
+- [A Guide to SMS Alerts API (Sender Registration and Compliance)](docs/a-guide-to-sms-alerts-api-sender-registration-and-8mp2e0.md)
